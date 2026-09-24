@@ -9,6 +9,8 @@ import { Tagging } from 'services/tagging';
 
 import './index.less';
 
+const SUGGEST_LIMIT = 100;
+
 @Service()
 export class TagTip {
     constructor(
@@ -20,12 +22,12 @@ export class TagTip {
         this.init().catch(logger.error);
     }
 
-    selectedIndex = 0;
-    inputElement!: HTMLInputElement;
-    autoCompleteList!: HTMLDivElement;
-    delimiter = ' ';
-    ctrlKey = false;
-    disableExclusionMode = false;
+    private selectedIndex = 0;
+    private inputElement!: HTMLInputElement;
+    private autoCompleteList!: HTMLDivElement;
+    private delimiter = ' ';
+    private ctrlKey = false;
+    private disableExclusionMode = false;
 
     private async init(): Promise<void> {
         const conf = await this.storage.get('config');
@@ -39,13 +41,12 @@ export class TagTip {
         this.inputElement = searchInput;
         this.inputElement.autocomplete = 'off';
         this.autoCompleteList = document.createElement('div');
-        this.autoCompleteList.className = 'eh-syringe-lite-auto-complete-list';
+        this.autoCompleteList.className = 'eh-syringe-lite-auto-complete-list eh-syringe-ignore';
 
         fromEvent<KeyboardEvent>(this.inputElement, 'keyup')
             .pipe(
                 filter((e) => !new Set(['ArrowUp', 'ArrowDown', 'Enter', 'Meta', 'Control', 'Alt']).has(e.key)),
-                map(() => this.inputElement.value),
-                // distinctUntilChanged()
+                map(() => this.inputElement.value.replace(/  +/gm, ' ')),
             )
             .subscribe((s) => {
                 this.search(s).catch(this.logger.error);
@@ -61,51 +62,73 @@ export class TagTip {
         });
 
         fromEvent(this.inputElement, 'focus').subscribe(() => this.setListPosition());
+        fromEvent(this.inputElement, 'pointerenter').subscribe(() => this.setListPosition());
 
         fromEvent(window, 'resize').subscribe(() => this.setListPosition());
-        fromEvent(window, 'scroll').subscribe(() => this.setListPosition());
 
         fromEvent(document, 'click').subscribe(() => {
             this.autoCompleteList.innerHTML = '';
         });
 
-        document.body.insertBefore(this.autoCompleteList, null);
+        document.body.appendChild(this.autoCompleteList);
+        this.setListPosition();
     }
 
-    async search(value: string): Promise<void> {
-        // todo: 增加自定义分隔符
-        value = this.inputElement.value = value.replace(/  +/gm, ' ');
-        const values = value.match(/(\S+:".+?"|".+?"|\S+:\S+|\S+)/gim) ?? [];
-        const result: Suggestion[] = [];
-        const used = new Set();
-        await Promise.all(
-            values.map(async (v, i) => {
-                const sv = values.slice(i);
-                if (sv.length) {
-                    const svs = sv.join(' ');
+    private searchCache: [string, Suggestion[]] = ['', []];
+    private async search(value: string): Promise<void> {
+        this.inputElement.value = value;
+        let result: Suggestion[];
+        if (this.searchCache[0] === value) {
+            result = this.searchCache[1];
+        } else {
+            // [^\s,] 空白字符和逗号以外的字符 (用于支持逗号)
+            // (?:"|$) 非捕获分组, 引号或文本结束  (用于匹配不完整的引号)
+
+            // [^\s,]+:".+?(?:"|$)     NS:"ab cd"     NS:"ab c...
+            // ".+?(?:"|$)]            "ab cd"        "ab c...
+            // [^\s,]+:[^\s,]+         NS:abcd
+            // [^\s,]+                 abcd
+
+            const values = value.match(/([^\s,]+:".+?(?:"|$)|".+?(?:"|$)]|[^\s,]+:[^\s,]+|[^\s,]+)/gim) ?? [];
+            result = [];
+            const used = new Set();
+            await Promise.all(
+                values.map(async (v, i) => {
+                    const sv = values.slice(i);
+                    if (!sv) return;
+
+                    const svs = sv.join(this.delimiter);
                     if (!svs || svs.replace(/\s+/, '').length === 0) return;
+
                     const suggestions = await this.messaging.emit('suggest-tag', {
                         term: svs,
-                        limit: 50,
+                        limit: SUGGEST_LIMIT,
                     });
 
-                    suggestions.forEach((suggestion) => {
-                        const tag = suggestion.tag;
-                        if (used.has(this.tagging.fullKey(tag))) return;
+                    for (const suggestion of suggestions) {
+                        const { tag } = suggestion;
+                        if (used.has(this.tagging.fullKey(tag))) continue;
                         used.add(this.tagging.fullKey(tag));
                         result.push(suggestion);
-                    });
-                }
-            }),
-        );
+                    }
+                }),
+            );
+            if (values.length > 1) {
+                // 整合了多个关键词的搜索结果，重新排序并限制数量
+                result.sort((a, b) => b.score - a.score);
+                result.splice(SUGGEST_LIMIT);
+            }
+            this.searchCache = [value, result];
+        }
         this.autoCompleteList.innerHTML = '';
-        result.slice(0, 50).forEach((tag) => {
-            this.autoCompleteList.insertBefore(this.tagElementItem(tag), null);
-        });
+        for (const suggestion of result) {
+            this.autoCompleteList.appendChild(this.tagElementItem(suggestion));
+        }
         this.selectedIndex = -1;
+        this.scrollList();
     }
 
-    checkCtrl(e: KeyboardEvent): void {
+    private checkCtrl(e: KeyboardEvent): void {
         if (this.disableExclusionMode) return;
         this.ctrlKey = e.ctrlKey || e.metaKey;
         if (this.ctrlKey) {
@@ -115,10 +138,10 @@ export class TagTip {
         }
     }
 
-    keydown(e: KeyboardEvent): void {
+    private keydown(e: KeyboardEvent): void {
         this.checkCtrl(e);
-        if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
-            if (e.code === 'ArrowUp') {
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            if (e.key === 'ArrowUp') {
                 this.selectedIndex--;
                 if (this.selectedIndex < 0) {
                     this.selectedIndex = this.autoCompleteList.children.length - 1;
@@ -139,7 +162,8 @@ export class TagTip {
             }
             e.preventDefault();
             e.stopPropagation();
-        } else if (e.code === 'Enter') {
+            this.scrollList();
+        } else if (e.key === 'Enter') {
             const children = Array.from(this.autoCompleteList.children);
             if (this.selectedIndex >= 0 && children[this.selectedIndex]) {
                 (children[this.selectedIndex] as HTMLAnchorElement).click();
@@ -149,14 +173,24 @@ export class TagTip {
         }
     }
 
-    setListPosition(): void {
-        const rect = this.inputElement.getBoundingClientRect();
-        this.autoCompleteList.style.left = `${rect.left}px`;
-        this.autoCompleteList.style.top = `${rect.bottom}px`;
-        this.autoCompleteList.style.minWidth = `${rect.width}px`;
+    private scrollList(): void {
+        if (this.selectedIndex < 0) {
+            this.autoCompleteList.scrollTop = 0;
+            return;
+        }
+        const current = this.autoCompleteList.children[this.selectedIndex];
+        if (!current) return;
+        current.scrollIntoView({ block: 'nearest', behavior: 'instant' });
     }
 
-    tagElementItem(suggestion: Suggestion): HTMLDivElement {
+    private setListPosition(): void {
+        const rect = this.inputElement.getBoundingClientRect();
+        this.autoCompleteList.style.left = `${rect.left + window.scrollX}px`;
+        this.autoCompleteList.style.top = `${rect.bottom + window.scrollY}px`;
+        this.autoCompleteList.style.width = `${rect.width}px`;
+    }
+
+    private tagElementItem(suggestion: Suggestion): HTMLDivElement {
         const tag = suggestion.tag;
         const item = document.createElement('div');
         const cnName = document.createElement('span');
@@ -176,14 +210,14 @@ export class TagTip {
 
         item.onclick = () => {
             let length = suggestion.term.length;
-            if (this.inputElement.value.endsWith(' ')) {
+            if (this.inputElement.value.endsWith(this.delimiter)) {
                 length++;
             }
             const exclude = this.ctrlKey ? '-' : '';
             this.inputElement.value = `${this.inputElement.value.slice(
                 0,
                 0 - length,
-            )}${exclude}${this.tagging.searchTerm(tag)} `;
+            )}${exclude}${this.tagging.searchTerm(tag)}${this.delimiter}`;
             this.autoCompleteList.innerHTML = '';
         };
         return item;

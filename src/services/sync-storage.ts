@@ -2,7 +2,7 @@ import { Service } from '.';
 import { syncStorage } from 'providers/storage';
 import { Logger } from './logger';
 import type { JsonValue } from 'type-fest';
-import { ConfigData, Storage } from './storage';
+import { type ConfigData, Storage } from './storage';
 import { packageJson } from 'info';
 
 export interface SyncStorageItems {
@@ -14,7 +14,10 @@ export interface SyncStorageItems {
 
 @Service()
 export class SyncStorage {
-    constructor(readonly logger: Logger, readonly async: Storage) {
+    constructor(
+        readonly logger: Logger,
+        readonly async: Storage,
+    ) {
         const oldVer = this.get('version');
         if (packageJson.version !== oldVer) {
             this.migrate();

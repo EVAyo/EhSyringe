@@ -1,8 +1,8 @@
-import { html, nothing, render, svg, SVGTemplateResult, TemplateResult } from 'lit-html';
+import { html, nothing, render, svg, type SVGTemplateResult, type TemplateResult } from 'lit-html';
 import { sleep } from 'utils';
 import { Service } from 'typedi';
 import { Logger } from 'services/logger';
-import { ConfigData, Storage, ImageLevel } from 'services/storage';
+import { type ConfigData, Storage, ImageLevel } from 'services/storage';
 import { Messaging } from 'services/messaging';
 import { DateTime } from 'services/date-time';
 import { openInTab } from 'providers/utils';
@@ -99,7 +99,7 @@ export class Popup {
         try {
             const data = await this.messaging.emit('check-database', { force: true });
             this.logger.log('Release Data', data);
-            const hasNewData = (this.state.updateAvailable = data.sha !== currentSha);
+            const hasNewData = (this.state.updateAvailable = !currentSha.startsWith(data.sha));
             if (hasNewData) {
                 this.state.newSha = data.sha.slice(0, 7);
                 this.state.versionInfo = `有更新！`;
@@ -108,7 +108,8 @@ export class Popup {
             }
         } catch (ex) {
             this.logger.error('获取失败', ex);
-            this.state.versionInfo = '获取失败';
+            const message = (ex instanceof Error ? ex.message : '未知错误') || '未知错误';
+            this.state.versionInfo = `获取失败：${message}`;
         }
     }
 
@@ -253,7 +254,7 @@ export class Popup {
             { key: 'autoUpdate', name: '自动更新' },
         ];
         return html`
-            <div id="settingPanel" class="panel ${state.showSettingPanel ? 'show' : ''}">
+            <div id="ehs-setting-panel" class="ehs-panel ${state.showSettingPanel ? 'ehs-show' : ''}">
                 <div class="header">
                     <div>设置</div>
                     <div class="cushion"></div>
@@ -296,9 +297,11 @@ export class Popup {
                         <p class="range-title">
                             介绍图片:
                             <span
-                                >${['隐藏全部', '隐藏色情图片', '隐藏引起不适的图片', '全部显示'][
-                                    state.configValue.introduceImageLevel
-                                ]}</span
+                                >${
+                                    ['隐藏全部', '隐藏色情图片', '隐藏引起不适的图片', '全部显示'][
+                                        state.configValue.introduceImageLevel
+                                    ]
+                                }</span
                             >
                         </p>
                         <div class="range-box">
@@ -329,6 +332,36 @@ export class Popup {
                             >
                         </div>
                     </div>
+                    <div class="override-db">
+                        <label for="overrideDbUrl">外部数据库: </label>
+                        <input
+                            id="overrideDbUrl"
+                            type="text"
+                            pattern="https?://.+|"
+                            value="${this.state.configValue.overrideDbUrl || ''}"
+                            placeholder="https://eg.com/data.html.json"
+                            @change="${(e: Event) => {
+                                const el = e.target as HTMLInputElement;
+                                const value = String(el.value || '').trim();
+                                el.value = value;
+                                let valid = true;
+                                if (value) {
+                                    try {
+                                        const u = new URL(value);
+                                        if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+                                            valid = false;
+                                        }
+                                    } catch {
+                                        valid = false;
+                                    }
+                                }
+                                el.classList.toggle('invalid', !valid);
+                                if (valid) {
+                                    this.changeConfigValue('overrideDbUrl', value);
+                                }
+                            }}"
+                        />
+                    </div>
                 </form>
                 <button
                     @click="${async () => {
@@ -344,7 +377,7 @@ export class Popup {
 
     private mainPanelTemplate(): TemplateResult {
         const state = this.state;
-        return html`<div id="mainPanel" class="panel ${state.showSettingPanel ? 'hide' : ''}">
+        return html`<div id="ehs-main-panel" class="ehs-panel ${state.showSettingPanel ? 'ehs-hide' : ''}">
             <div class="header">
                 <div>
                     <a href="${packageJson.homepage}" class="monospace minor">v${packageJson.version}</a>
@@ -376,7 +409,7 @@ export class Popup {
                 </div>
                 <table>
                     <tr>
-                        <th>TAG版本：</th>
+                        <th>标签版本：</th>
                         <td>
                             <a href="https://github.com/EhTagTranslation/Database/tree/${state.sha}" class="monospace"
                                 >${state.sha || ' --- '}</a
@@ -425,7 +458,7 @@ export class Popup {
 
     private el!: HTMLElement;
     private provider!: PopupProvider;
-    private downloadStatusSub?: MessageListener;
+    private downloadStatusSub?: MessageListener<'updating-database', DownloadStatus, void>;
     mount(el: HTMLElement, provider: PopupProvider): void {
         if (this.el != null) throw new Error('Injected twice');
         this.el = el;
@@ -452,9 +485,7 @@ export class Popup {
         this.updateView();
         await sleep(0);
         await this.checkVersion();
-        if (!this.downloadStatusSub) {
-            this.downloadStatusSub = this.messaging.on('updating-database', this.downloadStatus);
-        }
+        this.downloadStatusSub ??= this.messaging.on('updating-database', this.downloadStatus);
         this.el.addEventListener('click', this.openLink);
     }
 

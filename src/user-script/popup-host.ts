@@ -1,4 +1,5 @@
 import { Container } from 'services';
+import { isHathNetwork } from 'utils/hosts';
 import { Popup } from 'plugin/popup';
 import { packageJson } from 'info';
 import { setBadge } from 'providers/utils';
@@ -35,22 +36,22 @@ function dragButton(el: HTMLElement, click: (e: MouseEvent) => void): void {
         startX = 0,
         startY = 0;
 
-    el.addEventListener('mousedown', dragMouseDown, { passive: false });
+    el.addEventListener('pointerdown', dragMouseDown, { passive: false });
     el.addEventListener('click', elementClick, { passive: false });
 
     let moved = false;
 
-    function dragMouseDown(e: MouseEvent): void {
+    function dragMouseDown(e: PointerEvent): void {
         e.preventDefault();
         // get the mouse cursor position at startup:
         startX = mouseX = e.clientX;
         startY = mouseY = e.clientY;
         moved = false;
-        document.addEventListener('mouseup', closeDragElement, { passive: false });
-        document.addEventListener('mousemove', elementDrag, { passive: false });
+        document.addEventListener('pointerup', closeDragElement, { passive: false });
+        document.addEventListener('pointermove', elementDrag, { passive: false });
     }
 
-    function elementDrag(e: MouseEvent): void {
+    function elementDrag(e: PointerEvent): void {
         e.preventDefault();
         const currentX = Number.parseFloat(el.style.right);
         const currentY = Number.parseFloat(el.style.bottom);
@@ -71,11 +72,11 @@ function dragButton(el: HTMLElement, click: (e: MouseEvent) => void): void {
         }
     }
 
-    function closeDragElement(e: MouseEvent): void {
+    function closeDragElement(e: PointerEvent): void {
         e.preventDefault();
         // stop moving when mouse button is released:
-        document.removeEventListener('mouseup', closeDragElement);
-        document.removeEventListener('mousemove', elementDrag);
+        document.removeEventListener('pointerup', closeDragElement);
+        document.removeEventListener('pointermove', elementDrag);
         const finalX = clampX(Number.parseFloat(el.style.right));
         const finalY = clampY(Number.parseFloat(el.style.bottom));
         el.style.right = `${finalX}px`;
@@ -94,14 +95,15 @@ function dragButton(el: HTMLElement, click: (e: MouseEvent) => void): void {
 }
 
 function shouldShowPopup(): boolean {
+    if (isHathNetwork(location.hostname)) return false;
     if (
         /^\/mpv\//i.test(location.pathname) ||
         location.pathname === '/archiver.php' ||
         location.pathname === '/gallerytorrents.php' ||
         location.pathname === '/gallerypopups.php'
-    ) {
+    )
         return false;
-    }
+
     return true;
 }
 
@@ -117,12 +119,12 @@ export function createPopup(): void {
     setBadge({ text: '' });
     const popupBack = document.body.appendChild(document.createElement('div'));
     popupBack.id = 'eh-syringe-popup-back';
-    popupBack.lang = 'cmn-Hans';
+    popupBack.lang = 'zh-hans';
     const popup = popupBack.appendChild(document.createElement('div'));
     popup.id = 'eh-syringe-popup';
 
-    const closeListeners = new Array<() => unknown>();
-    const openListeners = new Array<() => unknown>();
+    const closeListeners: Array<() => unknown> = [];
+    const openListeners: Array<() => unknown> = [];
     popupBack.classList.add('close');
     popupBack.ontransitionend = (ev) => {
         if (ev.target !== popupBack) return;

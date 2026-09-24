@@ -1,5 +1,8 @@
-import { UiTranslation } from 'services/ui-translation';
+import { isEx, isEh, isRepo, isWiki } from 'utils/hosts';
+import { ready } from 'utils/dom';
+import type { EHTNamespaceNameShort } from 'interface';
 import { Service } from 'services';
+import { UiTranslation } from 'services/ui-translation';
 import type { ConfigData } from 'services/storage';
 import { SyncStorage } from 'services/sync-storage';
 import { Logger } from 'services/logger';
@@ -9,22 +12,124 @@ import { DateTime } from 'services/date-time';
 
 import './index.less';
 
-function isNode<K extends keyof HTMLElementTagNameMap>(
-    node: Node | undefined,
-    nodeName: K,
-): node is HTMLElementTagNameMap[K] {
-    return node instanceof HTMLElement && node.localName === nodeName;
+function isElement<K extends keyof HTMLElementTagNameMap | undefined = undefined>(
+    node: Node | null | undefined,
+    nodeName?: K,
+): node is K extends keyof HTMLElementTagNameMap ? HTMLElementTagNameMap[K] : HTMLElement {
+    return node instanceof HTMLElement && (nodeName == null || node.localName === nodeName);
 }
 
 function isText(node: Node | undefined): node is Text {
-    return node != null && node.nodeType === Node.TEXT_NODE;
+    return node?.nodeType === Node.TEXT_NODE;
 }
 
+function childNodes(node: Node): Node[] {
+    const iterator = document.createNodeIterator(node);
+    const nodes: Node[] = [];
+    let childNode = iterator.nextNode();
+    while (childNode) {
+        nodes.push(childNode);
+        childNode = iterator.nextNode();
+    }
+    return nodes;
+}
+
+const skipNodeName = new Set<string>(['TITLE', 'LINK', 'META', 'HEAD', 'SCRIPT', 'BR', 'HR', 'STYLE', 'MARK']);
+const ignoreClassName = `eh-syringe-ignore`;
+const skipElementMatcher = `.${ignoreClassName}, .${ignoreClassName} *, [translate=no], [translate=no] :not([translate=yes])`;
+
+declare global {
+    interface Window {
+        toggle_advsearch_pane: (b: HTMLElement) => void;
+        toggle_filesearch_pane: (b: HTMLElement) => void;
+        show_advsearch_pane: (b: HTMLElement) => void;
+        hide_advsearch_pane: (b: HTMLElement) => void;
+        show_filesearch_pane: (b: HTMLElement) => void;
+        hide_filesearch_pane: (b: HTMLElement) => void;
+
+        // patch mediawiki https://www.mediawiki.org/wiki/ResourceLoader/Migration_guide_(users)#addOnloadHook
+        addOnloadHook: (callback: () => void) => void;
+    }
+}
+// 该方案同时在 V2、V3 和 UserScript 生效
+// 注意 actualCode 是在事件回调内部运行的，要挂载变量需要显式写 `window.varName = xxx`
+function codePatch(window: Window): void {
+    window.addOnloadHook = function (callback: () => void): void {
+        if (document.readyState !== 'loading') {
+            setTimeout(callback, 0);
+        } else {
+            window.addEventListener('DOMContentLoaded', callback, { once: true });
+        }
+    };
+    window.toggle_advsearch_pane = function toggle_advsearch_pane(b) {
+        if (document.getElementById('advdiv')!.style.display === 'none') {
+            window.show_advsearch_pane(b);
+        } else {
+            window.hide_advsearch_pane(b);
+        }
+    };
+    window.toggle_filesearch_pane = function toggle_filesearch_pane(b) {
+        if (document.getElementById('fsdiv')!.style.display === 'none') {
+            window.show_filesearch_pane(b);
+        } else {
+            window.hide_filesearch_pane(b);
+        }
+    };
+}
+
+const WIKI_SEARCH_NS = [
+    'loc',
+    'o',
+    'l',
+    'f',
+    'm',
+    'x',
+    'g',
+    'a',
+    'cos',
+    'p',
+    'c',
+    'r',
+] as const satisfies readonly EHTNamespaceNameShort[] & { length: 12 };
+
+const WIKI_NORMAL_TERM = new Set([
+    'power',
+    'ban',
+    'bans',
+    'karma',
+    'banned',
+    'gallery',
+    'galleries',
+    'comment',
+    'comments',
+    'renaming',
+    'expunge',
+    'tag',
+    'archives',
+    'dawn',
+    'torrent',
+    'credits',
+    'bazaar',
+    'shrine',
+    'persona',
+    'contests',
+    'hath',
+    'deception',
+    'toplist',
+    'toplists',
+    'cosplay',
+]);
+
 class TagNodeRef {
+    static attached(node: Text | HTMLElement): boolean {
+        const parentElement = isText(node) ? node.parentElement : node;
+        if (!parentElement) return false;
+        return parentElement.hasAttribute(this.ATTR);
+    }
     private static readonly ATTR = 'ehs-tag';
 
-    static create(node: Text, service: Syringe): TagNodeRef | boolean {
-        const parentElement = node.parentElement;
+    static create(node: Text | HTMLElement, service: Syringe): TagNodeRef | boolean {
+        const parentElement = isText(node) ? node.parentElement : node;
         if (!parentElement || parentElement.hasAttribute(this.ATTR)) {
             return true;
         }
@@ -33,7 +138,25 @@ class TagNodeRef {
 
         let fullKeyCandidate: string | undefined;
         if (aTitle) {
-            const [namespace, key] = aTitle.split(':');
+            let tag;
+            if (aTitle.includes(':')) {
+                tag = aTitle.split(':');
+            } else if (service.isWiki) {
+                if (aTitle.startsWith('series ')) {
+                    tag = ['parody', aTitle.slice('series '.length).trim()];
+                } else if (aTitle.startsWith('character ')) {
+                    tag = ['character', aTitle.slice('character '.length).trim()];
+                } else if (aTitle.startsWith('artist ')) {
+                    tag = ['artist', aTitle.slice('artist '.length).trim()];
+                } else if (aTitle.startsWith('group ')) {
+                    tag = ['group', aTitle.slice('group '.length).trim()];
+                } else {
+                    tag = ['', aTitle];
+                }
+            } else {
+                tag = ['', aTitle];
+            }
+            const [namespace, key] = tag;
             fullKeyCandidate = service.tagging.fullKey({ namespace, key });
         } else if (aId) {
             let id = aId;
@@ -71,7 +194,7 @@ class TagNodeRef {
     translate(tagMap: Record<string, string> | undefined): boolean {
         if (!this.alive) return true;
         if (!this.service.config.translateTag) {
-            this.node.innerText = this.original;
+            this.node.textContent = this.original;
             this.node.setAttribute('lang', 'en');
             return true;
         }
@@ -79,15 +202,23 @@ class TagNodeRef {
             return false;
         }
         let value = tagMap[this.fullKey];
+        if (!value && this.service.isWiki && !this.fullKey.includes(':')) {
+            for (const ns of WIKI_SEARCH_NS) {
+                value = tagMap[`${ns}:${this.fullKey}`];
+                if (value) break;
+            }
+        }
         if (!value) {
             return false;
         }
         value = this.service.tagging.markImagesAndEmoji(value);
-        if (this.original[1] === ':') {
-            value = `${this.original[0]}:${value}`;
+        if (this.original.includes(':')) {
+            const originalNs = this.original.split(':')[0];
+            if (!originalNs) value = `:${value}`;
+            else value = `${this.service.tagging.ns(originalNs)}:${value}`;
         }
         this.node.innerHTML = value;
-        this.node.setAttribute('lang', 'cmn-Hans');
+        this.node.setAttribute('lang', 'zh-hans');
         return true;
     }
 }
@@ -119,7 +250,6 @@ export class Syringe {
         tags.forEach((t) => t.translate(tagMap));
     }
     documentEnd = false;
-    readonly skipNode: Set<string> = new Set(['TITLE', 'LINK', 'META', 'HEAD', 'SCRIPT', 'BR', 'HR', 'STYLE', 'MARK']);
     config = this.getAndInitConfig();
     observer?: MutationObserver;
 
@@ -128,8 +258,7 @@ export class Syringe {
     private updateConfig(config: ConfigData): void {
         this.config = config;
         this.storage.set('config', config);
-        const body = document.querySelector('body');
-        if (body) this.setBodyAttrs(body);
+        this.setRootAttrs();
         this.translateTags();
     }
 
@@ -143,42 +272,51 @@ export class Syringe {
         return this.storage.get('config');
     }
 
+    private codePatch(): void {
+        const { documentElement } = document;
+        documentElement.setAttribute('onreset', `;(${codePatch.toString()})(window); return false;`);
+        documentElement.dispatchEvent(new Event('reset'));
+        documentElement.removeAttribute('onreset');
+    }
+
+    private onObserved(mutations: readonly MutationRecord[]): void {
+        for (const mutation of mutations) {
+            if (mutation.type === 'attributes') {
+                this.translateNode(mutation.target);
+                continue;
+            }
+            for (const node of mutation.addedNodes) {
+                this.translateNode(node);
+                if (this.documentEnd) {
+                    const nodes = childNodes(node);
+                    for (const childNode of nodes) {
+                        this.translateNode(childNode);
+                    }
+                }
+            }
+        }
+    }
+
     private init(): void {
-        window.document.addEventListener('DOMContentLoaded', () => {
+        ready(() => {
+            this.onObserved(this.observer?.takeRecords() ?? []);
+            this.codePatch();
             this.documentEnd = true;
         });
-        const body = document.querySelector('body');
+        this.setRootAttrs();
+        const { body } = document;
         if (body) {
-            const nodes = new Array<Node>();
-            this.setBodyAttrs(body);
-            const nodeIterator = document.createNodeIterator(body);
-            let node = nodeIterator.nextNode();
-            while (node) {
-                nodes.push(node);
+            const nodes = childNodes(body);
+            this.logger.warn(`有 ${nodes.length} 个节点在注入前加载`, nodes);
+            for (const node of nodes) {
                 this.translateNode(node);
-                node = nodeIterator.nextNode();
             }
-            this.logger.debug(`有 ${nodes.length} 个节点在注入前加载`, nodes);
         } else {
             this.logger.debug(`没有节点在注入前加载`);
         }
-        this.observer = new MutationObserver((mutations) =>
-            mutations.forEach((mutation) =>
-                mutation.addedNodes.forEach((node1) => {
-                    this.translateNode(node1);
-                    if (this.documentEnd && node1.childNodes) {
-                        const nodeIterator = document.createNodeIterator(node1);
-                        let node = nodeIterator.nextNode();
-                        while (node) {
-                            this.translateNode(node);
-                            node = nodeIterator.nextNode();
-                        }
-                    }
-                }),
-            ),
-        );
-        this.observer.observe(window.document, {
-            attributes: true,
+        this.observer = new MutationObserver((mutations) => this.onObserved(mutations));
+        this.observer.observe(document.documentElement, {
+            attributeFilter: ['title', 'placeholder', 'label', 'value'],
             childList: true,
             subtree: true,
         });
@@ -221,11 +359,32 @@ export class Syringe {
         this.updatingTagMap = updatingTagMap;
     }
 
-    setBodyAttrs(node: HTMLBodyElement): void {
+    readonly isEx = isEx(location.hostname);
+    readonly isEh = isEh(location.hostname);
+    readonly isRepo = isRepo(location.hostname);
+    readonly isWiki = isWiki(location.hostname);
+    setRootAttrs(): void {
+        const node = document.documentElement;
         if (!node) return;
-        node.classList.add(!location.hostname.endsWith('exhentai.org') ? 'eh' : 'ex');
 
         node.classList.remove(...[...node.classList.values()].filter((k) => k.startsWith('ehs')));
+        node.classList.add('ehs-injected');
+        if (this.isEx) {
+            node.classList.add('ehs-ex');
+        } else if (this.isEh) {
+            node.classList.add('ehs-eh');
+        } else if (this.isRepo) {
+            node.classList.add('ehs-repo');
+        } else if (this.isWiki) {
+            node.classList.add('ehs-wiki');
+        } else if ('matchMedia' in window) {
+            const matchesDarkTheme = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            if (matchesDarkTheme) {
+                node.classList.add('ehs-ex');
+            } else {
+                node.classList.add('ehs-eh');
+            }
+        }
         if (!this.config.showIcon) {
             node.classList.add('ehs-hide-icon');
         }
@@ -233,7 +392,7 @@ export class Syringe {
             node.classList.add('ehs-translate-tag');
         }
         if (this.config.translateUi) {
-            node.setAttribute('lang', 'cmn-Hans');
+            node.setAttribute('lang', 'zh-hans');
         } else {
             node.setAttribute('lang', 'en');
         }
@@ -241,21 +400,16 @@ export class Syringe {
     }
 
     translateNode(node: Node): void {
-        if (
-            !node.nodeName ||
-            this.skipNode.has(node.nodeName) ||
-            (node.parentNode && this.skipNode.has(node.parentNode.nodeName))
-        ) {
+        const { nodeName } = node;
+        if (!nodeName || skipNodeName.has(nodeName)) return;
+        if (node.parentNode && skipNodeName.has(node.parentNode.nodeName)) return;
+        if (isElement(node) ? node.matches(skipElementMatcher) : node.parentElement?.matches(skipElementMatcher)) {
             return;
-        }
-
-        if (isNode(node, 'body')) {
-            this.setBodyAttrs(node);
         }
 
         const handled = this.translateTag(node);
         /* tag 处理过的ui不再处理*/
-        if (!handled && this.config.translateUi) {
+        if (!handled && (this.config.translateUi || this.config.translateTimestamp)) {
             this.translateUi(node);
         }
     }
@@ -264,25 +418,88 @@ export class Syringe {
         if (!node) {
             return false;
         }
+        if (isElement(node, 'a') && node.href.startsWith('https://e-hentai.org/tag/')) {
+            const url = new URL(node.href);
+            const urlTag = decodeURIComponent(url.pathname.split('/').pop()!).replace(/_/g, ' ').replace(/\+/g, ' ');
+            if (urlTag !== node.textContent) {
+                return false;
+            }
+            node.title = node.textContent ?? '';
+            return true;
+        }
+        if (
+            this.isWiki &&
+            ((isElement(node, 'h1') && node.id === 'firstHeading') ||
+                (isElement(node, 'a') && new URL(node.href).hostname === 'ehwiki.org'))
+        ) {
+            if (node.className.startsWith('oo-ui-')) {
+                // 不翻译搜索框
+                return false;
+            }
+            const tag = (node.textContent || '')
+                .replace(/[\s\u200E\u200F]+/g, ' ')
+                .trim()
+                .toLowerCase();
+            if (!this.tagging.isTagName(tag) || WIKI_NORMAL_TERM.has(tag)) {
+                return false;
+            }
+            if (node.id === 'firstHeading') {
+                node.title = tag;
+                return true;
+            }
+            if (!('href' in node)) {
+                return false;
+            }
+
+            const isWikiLink =
+                // wiki 内部链接
+                /^https?:\/\/ehwiki.org\/wiki\/[-+._A-Za-z0-9]+($|\?)/.test(node.href) ||
+                // 指向不存在页面的链接
+                (node.classList.contains('new') &&
+                    /^https?:\/\/ehwiki.org\/action\/edit\/[-+._A-Za-z0-9]+($|\?)/.test(node.href));
+            if (!isWikiLink) return false;
+
+            const url = new URL(node.href);
+            const urlTag = decodeURIComponent(url.pathname.split('/').pop()!)
+                .replace(/_/g, ' ')
+                .replace(/\+/g, ' ')
+                .toLowerCase();
+            if (urlTag !== tag) {
+                return false;
+            }
+            node.title = tag;
+            return true;
+        }
         return node.classList.contains('gt') || node.classList.contains('gtl') || node.classList.contains('gtw');
     }
 
     translateTag(node: Node): boolean {
         const parentElement = node.parentElement;
-        if (!isText(node) || !parentElement) {
+
+        let ref: TagNodeRef | boolean;
+        if (parentElement?.id === 'tagname_newtagcomplete-list' && isElement(node)) {
+            // 翻译我的标签提示
+            if (node.querySelector('.ehs-new-tag-complete-translate')) return false;
+            const elTrans = document.createElement('span');
+            const tag = node.getAttribute('data-value');
+            if (!tag) return false;
+            elTrans.id = tag;
+            elTrans.classList.add('ehs-new-tag-complete-translate');
+            node.appendChild(elTrans);
+            ref = TagNodeRef.create(elTrans, this);
+        } else if (!isText(node) || !parentElement) {
             return false;
-        }
-        if (parentElement.nodeName === 'MARK' || parentElement.classList.contains('auto-complete-text')) {
+        } else if (TagNodeRef.attached(node)) {
+            return true;
+        } else if (parentElement.nodeName === 'MARK' || parentElement.classList.contains('auto-complete-text')) {
             // 不翻译搜索提示的内容
             return true;
-        }
-
-        // 标签只翻译已知的位置
-        if (!this.isTagContainer(parentElement) && !this.isTagContainer(parentElement?.parentElement)) {
+        } else if (!this.isTagContainer(parentElement) && !this.isTagContainer(parentElement?.parentElement)) {
+            // 标签只翻译已知的位置
             return false;
+        } else {
+            ref = TagNodeRef.create(node, this);
         }
-
-        const ref = TagNodeRef.create(node, this);
 
         if (typeof ref == 'boolean') return ref;
 
@@ -292,26 +509,48 @@ export class Syringe {
     }
 
     private translateUiText(text: string): string | undefined {
-        const plain = this.uiData.plainReplacements.get(text);
-        if (plain != null) return plain;
-
         let repText = text;
-        for (const [k, v] of this.uiData.regexReplacements) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            repText = repText.replace(k, v as (substring: string, ...args: any[]) => string);
+
+        if (this.config.translateUi) {
+            const plain = this.uiData.plainReplacements.get(text);
+            if (plain != null) return plain;
+
+            for (const [k, v] of this.uiData.regexReplacements) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                repText = repText.replace(k, v as (substring: string, ...args: any[]) => string);
+            }
         }
 
-        if (this.config.translateTimestamp !== false) {
-            repText = repText.replace(/\d\d\d\d-\d\d-\d\d \d\d:\d\d/g, (t) => {
-                const date = Date.parse(t + 'Z');
-                if (!date) return t;
-                return `${this.time.diff(date, undefined, DateTime.hour)}`;
-            });
-            repText = repText.replace(/\d\d \w{2,10} \d\d\d\d, \d\d:\d\d/gi, (t) => {
-                const date = Date.parse(t + ' UTC');
-                if (!date) return t;
-                return `${this.time.diff(date, undefined, DateTime.hour)}`;
-            });
+        if (
+            this.config.translateTimestamp &&
+            // 快速判断是否有可能包含时间戳
+            repText.includes(':')
+        ) {
+            repText = repText.replace(
+                /(\d\d\d\d-[0-1][0-9]-[0-3][0-9] [0-2][0-9]:[0-5][0-9](:[0-5][0-9])?)( UTC)?/g,
+                ($, t, seconds) => {
+                    const date = Date.parse(t + 'Z');
+                    if (!date) return $;
+                    if (seconds) return this.time.absolute(date, true);
+                    return this.time.diff(date, undefined, DateTime.hour);
+                },
+            );
+            repText = repText.replace(
+                /([0-3][0-9]|[1-9]) (January|February|March|April|May|June|July|August|September|October|November|December) (\d\d\d\d), ([0-2][0-9]:[0-5][0-9])( UTC)?/gi,
+                ($, d, m, y, t) => {
+                    const date = Date.parse(`${d} ${m} ${y}, ${t} UTC`);
+                    if (!date) return $;
+                    return this.time.diff(date, undefined, DateTime.hour);
+                },
+            );
+            repText = repText.replace(
+                /(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), ([0-3][0-9]|[1-9])(st|nd|rd|th) of (January|February|March|April|May|June|July|August|September|October|November|December) (\d\d\d\d), ([0-2][0-9]:[0-5][0-9])( UTC)?/gi,
+                ($, _w, d, _do, m, y, t) => {
+                    const date = Date.parse(`${d} ${m} ${y}, ${t} UTC`);
+                    if (!date) return $;
+                    return this.time.diff(date, undefined, DateTime.hour);
+                },
+            );
         }
         if (repText !== text) return repText;
 
@@ -319,6 +558,12 @@ export class Syringe {
     }
 
     translateUi(node: Node): void {
+        if (isElement(node) && node.title && typeof node.title == 'string') {
+            const translation = this.translateUiText(node.title);
+            if (translation != null) {
+                node.title = translation;
+            }
+        }
         if (isText(node)) {
             const text = node.textContent ?? '';
             const translation = this.translateUiText(text);
@@ -326,20 +571,41 @@ export class Syringe {
                 node.textContent = translation;
             }
             return;
-        } else if (isNode(node, 'input') || isNode(node, 'textarea')) {
-            if (node.placeholder) {
-                const translation = this.translateUiText(node.placeholder);
-                if (translation != null) {
-                    node.placeholder = translation;
+        }
+        if (isElement(node, 'input') && (node.type === 'submit' || node.type === 'button' || node.type === 'reset')) {
+            // 将 input[type=submit] 等按钮替换为 button[ehs-input]，避免 value 属性被翻译导致提交内容错误
+            const translation = this.translateUiText(node.value);
+            if (translation != null) {
+                const button = document.createElement('button');
+                for (const attr of node.attributes) {
+                    button.setAttribute(attr.name, attr.value);
                 }
-            } else if (node.type === 'submit' || node.type === 'button') {
-                const translation = this.translateUiText(node.value);
-                if (translation != null) {
-                    node.value = translation;
-                }
+                button.setAttribute('ehs-input', '');
+                button.textContent = translation;
+                node.replaceWith(button);
+                // 新元素的事件派发至原元素，兼容 MEMS
+                button.addEventListener('click', (e) => {
+                    if (!node.dispatchEvent(new MouseEvent('click', e))) {
+                        e.preventDefault();
+                    }
+                });
             }
             return;
-        } else if (isNode(node, 'optgroup')) {
+        }
+        if (isElement(node, 'button') && node.hasAttribute('ehs-input')) {
+            // 响应 button[ehs-input] 的 value 变更
+            const translation = this.translateUiText(node.value);
+            node.textContent = translation ?? node.value;
+            return;
+        }
+        if ((isElement(node, 'input') || isElement(node, 'textarea')) && node.placeholder) {
+            const translation = this.translateUiText(node.placeholder);
+            if (translation != null) {
+                node.placeholder = translation;
+            }
+            return;
+        }
+        if (isElement(node, 'optgroup')) {
             const translation = this.translateUiText(node.label);
             if (translation != null) {
                 node.label = translation;
@@ -347,44 +613,44 @@ export class Syringe {
             return;
         }
 
-        if (isNode(node, 'a') && node?.parentElement?.parentElement?.id === 'nb') {
+        // 导航链接，一体化处理，不再处理文本节点（原文使用子元素和媒体查询实现页面宽度改变时文本自动更改为缩写）
+        if (isElement(node, 'a') && node?.parentElement?.parentElement?.id === 'nb') {
             const translation = this.translateUiText(node.textContent ?? '');
             if (translation != null) {
                 node.textContent = translation;
             }
         }
 
-        if (isNode(node, 'p') && node.classList.contains('gpc')) {
-            /* 兼容熊猫书签，单独处理页码，保留原页码Element，防止熊猫书签取不到报错*/
-            const text = node.textContent ?? '';
-            const p = document.createElement('p');
-            p.textContent = text.replace(/Showing ([\d,]+) - ([\d,]+) of ([\d,]+) images?/, '$1 - $2，共 $3 张图片');
-            p.className = 'gpc-translate';
-            node.parentElement?.insertBefore(p, node);
-            node.style.display = 'none';
+        if (isElement(node, 'div') && node.className === 'd' && isElement(node.parentElement, 'body')) {
+            // 兼容 ExResurrect
+            this.cloneAndPrependElement(node);
         }
 
-        if (isNode(node, 'div')) {
+        if (isElement(node, 'select') && node.matches('.searchnav > div > :scope')) {
+            // 兼容 MEMS
+            this.cloneAndPrependElement(node);
+        }
+
+        if (isElement(node, 'p') && node.classList.contains('gpc')) {
+            /* 兼容熊猫书签，单独处理页码，保留原页码 Element，防止熊猫书签取不到报错 */
+            this.cloneAndPrependElement(node);
+        }
+
+        if (isElement(node, 'div') && node.id === 'gdd') {
             /* E-Hentai-Downloader 兼容处理 */
-            if (node.id === 'gdd') {
-                const div = document.createElement('div');
-                div.textContent = node.textContent;
-                div.style.display = 'none';
-                node.insertBefore(div, null);
-            }
-
-            /* 熊猫书签 兼容处理 2 */
-            if (
-                node.parentElement?.id === 'gdo4' &&
-                node.classList.contains('ths') &&
-                node.classList.contains('nosel')
-            ) {
-                const div = document.createElement('div');
-                div.textContent = node.textContent;
-                div.style.display = 'none';
-                div.className = 'ths';
-                node.parentElement.insertBefore(div, node);
-            }
+            this.cloneAndPrependElement(node.firstElementChild!);
         }
+    }
+
+    private cloneAndPrependElement<E extends Element, C extends Element = E>(el: E, cloneNode?: (el: E) => C): C {
+        const clone = cloneNode ? cloneNode(el) : (el.cloneNode(true) as C);
+        clone.classList.add(ignoreClassName);
+        clone.setAttribute('hidden', '');
+        if (clone.id) clone.id = `ehs-clone-${clone.id}`;
+        clone.querySelectorAll('[id]').forEach((node) => {
+            node.id = `ehs-clone-${node.id}`;
+        });
+        el.before(clone);
+        return clone;
     }
 }

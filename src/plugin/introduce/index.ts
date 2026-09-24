@@ -21,7 +21,7 @@ export class Introduce {
         const conf = await this.storage.get('config');
         if (!conf.showIntroduce) return;
 
-        const tagList = document.querySelector('#taglist') as HTMLDivElement;
+        const tagList = document.querySelector<HTMLDivElement>('#taglist')!;
         this.tagList = tagList;
         const gridRight = document.querySelector('#gd5');
 
@@ -41,7 +41,7 @@ export class Introduce {
             let target = ev.target as Node | null;
 
             if (target instanceof HTMLElement && target.classList.contains('ehs-close')) {
-                const selectedTag = this.tagList.querySelector('[style*="color"]') as HTMLElement;
+                const selectedTag = this.tagList.querySelector<HTMLElement>('[style*="color"]')!;
                 if (selectedTag) {
                     selectedTag.click();
                 } else {
@@ -101,21 +101,20 @@ export class Introduce {
         }
         const editorUrl = this.tagging.editorUrl({ namespace, key });
         if (tagData) {
+            const tagEn = `${this.tagging.namespace(tagData.ns)}:${tagData.key}`;
             // language=HTML
             this.introduceBox.innerHTML = `
             <div class="ehs-title">
-                <div>
+                <div title="${`${this.tagging.removeImagesAndEmoji(tagData.name)}\n${tagEn}`}">
                     <div class="ehs-cn">${this.tagging.markImagesAndEmoji(tagData.name)}</div>
-                    <div class="ehs-en">${this.tagging.namespace(tagData.ns)}:${tagData.key}</div>
+                    <div class="ehs-en">${tagEn}</div>
                 </div>
-                <span class="ehs-close">×</span>
+                <span class="ehs-close"></span>
             </div>
             <div class="ehs-content">
                 ${
-                    tagData.intro
-                        ? tagData.intro
-                        : `
-                    <div class="ehs-no-intro">
+                    tagData.intro ||
+                    `<div class="ehs-no-intro">
                         <h3>无介绍</h3>
                         <center><a href="${editorUrl}" target="_blank">提供介绍</a></center>
                     </div> `
@@ -126,11 +125,11 @@ export class Introduce {
             // language=HTML
             this.introduceBox.innerHTML = `
             <div class="ehs-title">
-                <div>
+                <div title="${namespace}:${key}">
                     <div class="ehs-cn">${namespace}:${key}</div>
                     <div class="ehs-en">该标签尚未翻译</div>
                 </div>
-                <span class="ehs-close">×</span>
+                <span class="ehs-close"></span>
             </div>
             <div class="ehs-content">
                 <div class="ehs-no-translation">
@@ -176,7 +175,7 @@ export class Introduce {
         if (!m?.[1]) return;
         const m2 = m[1].split(':');
         let namespace: EHTNamespaceName = 'temp';
-        let tag = '';
+        let tag: string;
         if (m2.length === 1) {
             tag = m2[0];
         } else {

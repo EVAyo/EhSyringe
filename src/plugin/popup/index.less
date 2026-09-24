@@ -1,4 +1,3 @@
-// common resetting
 #eh-syringe-popup-root {
     text-align: initial;
     font-size: initial;
@@ -9,12 +8,29 @@
     td {
         background: inherit;
         color: inherit;
+        margin: 0;
+        padding: 0;
+    }
+    th,
+    td {
+        padding: 1px;
     }
 
     input {
         border: none;
         padding: 0;
         margin: 0;
+        min-width: 0;
+    }
+
+    input[type='text'] {
+        border-radius: 0;
+        border-bottom: solid 1px transparent;
+
+        &.invalid,
+        &:invalid {
+            border-color: #aa575e !important;
+        }
     }
 
     input[type='radio'],
@@ -36,10 +52,30 @@
 // theme
 .theme(@background, @foreground, @shadow, @accent) {
     @soft-accent: softlight(@accent, @background);
-    &,
-    .panel {
+
+    & {
+        border: @accent solid 1px;
+        border-radius: 6px;
         background: @background;
         color: @foreground;
+        box-shadow: 0 0 6px 2px @shadow;
+    }
+
+    .action {
+        background: @background;
+        color: @accent;
+
+        &.primary {
+            border-color: @accent;
+            background: @accent;
+            color: @background;
+        }
+        &.primary:hover {
+            background: softlight(@accent, @foreground);
+        }
+        &.primary:active {
+            background: softlight(@accent, @background);
+        }
     }
 
     #info {
@@ -88,25 +124,25 @@
         }
     }
 
-    .action {
-        background: @background;
-        color: @accent;
-
-        &.primary {
-            background: @accent;
-            color: @background;
-        }
-        &.primary:hover {
-            background: softlight(@accent, @foreground);
-        }
-        &.primary:active {
-            background: softlight(@accent, @background);
-        }
-    }
-
     #settingForm {
+        scrollbar-color: @accent transparent;
+
         .checkbox-item svg path {
             stroke: @accent;
+        }
+
+        input[type='text'] {
+            color: @accent;
+            border-color: @soft-accent;
+            &:focus {
+                border-color: @accent;
+            }
+
+            &::placeholder {
+                opacity: 0.5;
+                -webkit-text-fill-color: @soft-accent;
+                color: @soft-accent;
+            }
         }
 
         input[type='checkbox'] {
@@ -152,14 +188,16 @@
         }
     }
 }
-#eh-syringe-popup-root {
+
+#eh-syringe-popup {
     @background: rgb(240, 240, 240);
     @foreground: #111;
     @shadow: rgba(0, 0, 0, 0.2);
     @accent: #8041a6;
     .theme(@background, @foreground, @shadow, @accent);
 }
-body.ex #eh-syringe-popup-root {
+
+:root.ehs-ex #eh-syringe-popup {
     @background: rgb(49, 49, 49);
     @foreground: #eee;
     @shadow: rgba(0, 0, 0, 0.2);
@@ -183,7 +221,7 @@ body.ex #eh-syringe-popup-root {
         display: none;
     }
 
-    .panel {
+    .ehs-panel {
         margin: 0 auto;
         display: flex;
         flex-direction: column;
@@ -203,8 +241,10 @@ body.ex #eh-syringe-popup-root {
 
         .content {
             margin: 0 16px;
+            padding: 0 2px;
             flex: auto;
-            overflow: visible;
+            overflow: hidden auto;
+            scrollbar-width: thin;
         }
 
         .action {
@@ -219,6 +259,7 @@ body.ex #eh-syringe-popup-root {
             outline: 0;
             -webkit-tap-highlight-color: transparent;
             white-space: nowrap;
+            font-weight: normal;
             text-decoration: none;
             text-align: center;
             min-width: 64px;
@@ -227,16 +268,20 @@ body.ex #eh-syringe-popup-root {
             overflow: visible;
             transform: translate3d(0, 0, 0);
             border: 1px #ddd solid;
-            transition: background 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
+            transition:
+                background 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+                box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1);
 
             &.primary {
-                border: none;
-                box-shadow: 0 3px 1px -2px rgba(0, 0, 0, 0.2), 0 2px 2px 0 rgba(0, 0, 0, 0.14),
+                box-shadow:
+                    0 3px 1px -2px rgba(0, 0, 0, 0.2),
+                    0 2px 2px 0 rgba(0, 0, 0, 0.14),
                     0 1px 5px 0 rgba(0, 0, 0, 0.12);
             }
             &.primary:active {
-                border: none;
-                box-shadow: 0 5px 5px -3px rgba(0, 0, 0, 0.2), 0 8px 10px 1px rgba(0, 0, 0, 0.14),
+                box-shadow:
+                    0 5px 5px -3px rgba(0, 0, 0, 0.2),
+                    0 8px 10px 1px rgba(0, 0, 0, 0.14),
                     0 3px 14px 2px rgba(0, 0, 0, 0.12);
             }
             &:disabled {
@@ -248,11 +293,15 @@ body.ex #eh-syringe-popup-root {
         }
     }
 
-    #mainPanel {
-        transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1), transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+    #ehs-main-panel {
+        transition:
+            opacity 280ms cubic-bezier(0.4, 0, 0.2, 1),
+            transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
         transform: scale(1);
-        &.hide {
+        &.ehs-hide {
             transform: scale(0.9);
+            opacity: 0;
+            pointer-events: none;
         }
     }
 
@@ -267,8 +316,9 @@ body.ex #eh-syringe-popup-root {
         margin: 20px 0;
         transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
         transform: scale(1) rotate(-45deg);
-        #Syringe {
-            pointer-events: all;
+
+        svg {
+            pointer-events: none;
         }
         #Enema {
             opacity: 0;
@@ -280,7 +330,9 @@ body.ex #eh-syringe-popup-root {
         #Enema,
         #Enema2,
         #PushRod {
-            transition: width 280ms cubic-bezier(0.4, 0, 0.2, 1), opacity 280ms cubic-bezier(0.4, 0, 0.2, 1),
+            transition:
+                width 280ms cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 280ms cubic-bezier(0.4, 0, 0.2, 1),
                 transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
         }
         &.prominent {
@@ -296,7 +348,9 @@ body.ex #eh-syringe-popup-root {
                 #Enema,
                 #Enema2,
                 #PushRod {
-                    transition: width 600ms cubic-bezier(0.4, 0, 0.2, 1), transform 600ms cubic-bezier(0.4, 0, 0.2, 1);
+                    transition:
+                        width 600ms cubic-bezier(0.4, 0, 0.2, 1),
+                        transform 600ms cubic-bezier(0.4, 0, 0.2, 1);
                 }
             }
         }
@@ -320,7 +374,7 @@ body.ex #eh-syringe-popup-root {
         font-size: 14px;
     }
 
-    #settingPanel {
+    #ehs-setting-panel {
         position: absolute;
         left: 0;
         top: 0;
@@ -328,10 +382,12 @@ body.ex #eh-syringe-popup-root {
         right: 0;
         pointer-events: none;
         opacity: 0;
-        transition: opacity 280ms cubic-bezier(0.4, 0, 0.2, 1), transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+        transition:
+            opacity 280ms cubic-bezier(0.4, 0, 0.2, 1),
+            transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
         transform: scale(1.1);
 
-        &.show {
+        &.ehs-show {
             pointer-events: auto;
             opacity: 1;
             transform: scale(1);
@@ -443,8 +499,9 @@ body.ex #eh-syringe-popup-root {
             }
         }
     }
+
     .image-level {
-        margin: 4px;
+        padding: 4px;
     }
     .range-title {
         margin: 0;
@@ -461,6 +518,18 @@ body.ex #eh-syringe-popup-root {
             width: 30px;
             text-align: center;
             display: inline-block;
+        }
+    }
+
+    .override-db {
+        padding: 4px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        align-items: flex-start;
+
+        input {
+            width: 100%;
         }
     }
 }

@@ -5,13 +5,16 @@ import escapeHtml from 'escape-html';
 import emojiRegex from 'emoji-regex';
 
 const emojiReg = emojiRegex();
-const nsDic: { [k: string]: EHTNamespaceName } = {
+const nsDic: Record<string, EHTNamespaceName> = {
     r: 'reclass',
     reclass: 'reclass',
 
     l: 'language',
     language: 'language',
     lang: 'language',
+
+    loc: 'location',
+    location: 'location',
 
     o: 'other',
     other: 'other',
@@ -58,6 +61,7 @@ const shortNsDic: Record<EHTNamespaceName, EHTNamespaceNameShort> = {
     female: 'f',
     mixed: 'x',
     other: 'o',
+    location: 'loc',
     temp: '',
 };
 @Service()
@@ -81,16 +85,29 @@ export class Tagging {
     removePara(name: string): string {
         return name.replace(/^<p>(.+?)<\/p>$/, '$1').trim();
     }
-    markImagesAndEmoji(name: string): string {
-        return name
+    markImagesAndEmoji(text: string): string {
+        return text
             .replace(emojiReg, `<span ehs-emoji>$&</span>`)
             .replace(/<img(.*?)>/gi, `<img onerror="this.style.display='none'" ehs-icon $1>`);
     }
-    removeImagesAndEmoji(name: string): string {
-        return name
+    removeImagesAndEmoji(text: string): string {
+        return text
             .replace(emojiReg, '')
             .replace(/<img.*?>/gi, '')
             .trim();
+    }
+    removeHtmlTags(text: string): string {
+        return text
+            .replace(/<abbr title="(\w+:)?([^"]+)" ns="(\w+)">/gi, '($3:$2)')
+            .replace(/<(img|a).*?>/gi, '')
+            .replace(/<(p|strong|em|abbr)>/gi, '')
+            .replace(/<\/(a|p|strong|em|abbr)>/gi, '')
+            .trim();
+    }
+
+    isTagName(name: string): boolean {
+        if (!name || typeof name != 'string') return false;
+        return /^[a-z0-9. -]+$/.test(name);
     }
 
     fullKey(tag: { namespace: string; key: string } | { ns: EHTNamespaceNameShort; key: string }): string {
@@ -127,6 +144,7 @@ export class Tagging {
         female: '女',
         male: '男',
         mixed: '混',
+        location: '地点',
         reclass: '重新分类',
         temp: '临时',
     };

@@ -31,20 +31,21 @@ export type EHTNamespaceName =
     | 'female'
     | 'mixed'
     | 'other'
+    | 'location'
     | 'temp';
 
-export type EHTNamespaceNameShort = '' | 'r' | 'l' | 'p' | 'c' | 'g' | 'a' | 'cos' | 'm' | 'f' | 'x' | 'o';
+export type EHTNamespaceNameShort = '' | 'r' | 'l' | 'p' | 'c' | 'g' | 'a' | 'cos' | 'm' | 'f' | 'x' | 'o' | 'loc';
 
 export interface EHTNamespace {
     namespace: EHTNamespaceName;
     count: number;
-    data: { [tag: string]: EHTTag };
+    data: Record<string, EHTTag>;
 }
 
 export interface EHTTag {
     name: string;
-    intro?: string;
-    links?: string;
+    intro: string;
+    links: string;
 }
 
 export interface TagItem extends EHTTag {
@@ -53,10 +54,23 @@ export interface TagItem extends EHTTag {
     key: string;
     /** 去除 emoji 和图片等的名称 */
     cn: string;
+    /** 用于搜索的简介 */
+    introSearch: string;
 }
 
-export interface TagMap {
-    [fullKey: string]: TagItem;
+export type TagMap = Record<string, TagItem>;
+
+export interface GitHubAsset {
+    url: string;
+    id: number;
+    node_id: string;
+    name: string;
+    label: string;
+    size: number;
+    download_count: number;
+    created_at: string;
+    updated_at: string;
+    browser_download_url: string;
 }
 
 export interface GithubRelease {
@@ -70,4 +84,5 @@ export interface GithubRelease {
     created_at: string;
     published_at: string;
     body: string;
+    assets: GitHubAsset[];
 }

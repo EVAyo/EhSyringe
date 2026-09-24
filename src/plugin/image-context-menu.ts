@@ -1,6 +1,7 @@
 import { Service } from 'services';
-import { createMenu, Context, Menu, OnClickData } from 'providers/menu';
+import { createMenu, type Context, type Menu, type OnClickData } from 'providers/menu';
 import { openInTab } from 'providers/utils';
+import { EH, EHGT, EX, EXU, HATH, isEhGt, isUnion } from 'utils/hosts';
 
 @Service()
 export class ImageContextMenu implements Menu {
@@ -12,25 +13,34 @@ export class ImageContextMenu implements Menu {
         createMenu(this);
     }
     readonly documentUrlPatterns = [
-        '*://exhentai.org/*',
-        '*://e-hentai.org/*',
-        '*://*.exhentai.org/*',
-        '*://*.e-hentai.org/*',
+        `*://${EX}/*`,
+        `*://${EXU}/*`,
+        `*://${EH}/*`,
+        `*://*.${EX}/*`,
+        `*://*.${EXU}/*`,
+        `*://*.${EH}/*`,
     ];
-    readonly title = '显示所有包含此图片的图库';
+    readonly title = `显示所有包含此图像的图库`;
     readonly targetUrlPatterns = [
-        '*://exhentai.org/t/*.jpg',
-        '*://ehgt.org/*.jpg',
-        '*://ul.ehgt.org/*.jpg',
-        '*://*.hath.network:*/h/*',
-        '*://*.hath.network/h/*',
+        `*://${EX}/t/*.jpg`,
+        `*://${EXU}/t/*.jpg`,
+        `*://s.${EX}/t/*.jpg`,
+        `*://s.${EXU}/t/*.jpg`,
+        `*://${EHGT}/*.jpg`,
+        `*://ul.${EHGT}/*.jpg`,
+        `*://*.${HATH}:*/h/*`,
+        `*://*.${HATH}/h/*`,
     ];
-    readonly contexts: Context[] = ['image', 'link'];
+    readonly contexts: [Context, ...Context[]] = ['image', 'link'];
 
     readonly onclick = (info: OnClickData): void => {
-        const url = info.url ?? '';
-        const match = /[a-f0-9]{40}/i.exec(url);
+        if (!info.url) return;
+        const url = new URL(info.url);
+        const match = /[a-f0-9]{40}/i.exec(url.pathname);
         if (!match) return;
-        openInTab(`https://exhentai.org/?f_shash=${match[0]}`);
+        let base = `https://${EX}`;
+        if (isEhGt(url.hostname)) base = `https://${EH}`;
+        else if (isUnion(url.hostname)) base = `http://${EXU}`;
+        openInTab(`${base}/?f_shash=${match[0]}`);
     };
 }
